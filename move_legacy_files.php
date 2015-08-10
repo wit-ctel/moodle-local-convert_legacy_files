@@ -8,12 +8,12 @@ define('CLI_SCRIPT', 1);
 require_once('../../config.php');
 
 /* Abstract Template Class
- * 
+ *
  */
 abstract class MoveLegacyFilesAbstract
 {
     // Must Override
-    abstract function build_link_record($old_url, $new_url, $activity, $activity_area, $check_url);
+    abstract function build_link_record($old_url, $new_url, $activity, $activity_area, $found_filearea);
 
     /* Run SQL query for list of activities with legacy files.
      * @param string $table sql table
@@ -48,7 +48,7 @@ abstract class MoveLegacyFilesAbstract
 
             foreach($matches as $match)
             {
-		// Trim out anything after '?'
+                // Trim out anything after '?'
                 $search_match = array_shift(explode('?', $match[1]));
                 echo "Matched Search: " . $search_match . "\n";
 
@@ -75,60 +75,65 @@ abstract class MoveLegacyFilesAbstract
      * @param string $activity_area activity area
      */
     private function move_legacy_file_to_activity($relativepath, $relative_url, $filename, $activity, $activity_name, $activity_area)
-    {    
-	// Build the pathnamehash to locate the legacy file
-	$args = explode('/', $relativepath);
-	$rpath = array_slice($args, 1);
-	$final_path = implode('/', $rpath);
-    
-	// Retrieve the file and store it temporarily
-	$context = context_course::instance($activity->course);
-	$fs = get_file_storage();
-	$fullpath = "/$context->id/course/legacy/0/" . $final_path;
-    
-	// Double Check if legacy file is still there first
-	$legacy_file_check = $fs->file_exists_by_hash(sha1($fullpath));
-     
-	if(!$legacy_file_check)
-	{
-	    echo "No legacy file found, skipping...\n\n";
-	}
-	else
-	{
-	    $old_file = $fs->get_file_by_hash(sha1($fullpath));
-	    echo "Found Legacy file with pathnamehash: " . $old_file->get_pathnamehash() . "\n";
-	    echo "Full path to Legacy File: " . $fullpath . "\n";
-    
-	    // Call the function to build the file record
-	    $file_record = $this->build_file_record($filename, $context, $activity_name, $activity_area);
-    
-	    // check if file already in the proper location, if so, just update the url.
-	    if($fs->file_exists($file_record->contextid, $file_record->component,
-		    $file_record->filearea, $file_record->itemid,
-		    $file_record->filepath, $file_record->filename))
-	    {
-		echo "File exists with pathnamehash: " . $file_record->pathnamehash .  " just replacing the urls\n";
-		$this->update_file_link($relative_url, $activity, $file_record, $activity_name, $activity_area);
-	    }
-	    else
-	    {
+    {
+	global $DB;
+	
+        // Build the pathnamehash to locate the legacy file
+        $args = explode('/', $relativepath);
+        $rpath = array_slice($args, 1);
+        $final_path = implode('/', $rpath);
+
+        // Retrieve the file and store it temporarily
+        $context = context_course::instance($activity->course);
+        $fs = get_file_storage();
+        $fullpath = "/$context->id/course/legacy/0/" . $final_path;
+
+        //Check for instance of file via filename, ignoring draftfiles
+        $file_instance = $DB->get_record_sql('SELECT * FROM {files} WHERE filename LIKE ?  AND filearea <> ? ', array($filename, 'draft'));
+        
+
+        switch ($file_instance->filearea)
+        {
+	    case 'intro':
+	    case 'content':
+		// Code block for matching intro or content
+		echo "File already exists in non-legacy area: " . $file_instance->filearea . " : Updating link to match...\n";
+		$old_file = $fs->get_file_by_hash($file_instance->pathnamehash);
+		
+		// Call the function to build the file record
+		$file_record = $this->build_file_record($old_file, $context, $activity_name, $activity_area);
+		$this->update_file_link($relative_url, $activity, $file_record, $activity_name, $activity_area, $file_instance->filearea);
+		break;
+		// End code block
+	    case 'legacy':
+		// Code Block for matching legacy
+		echo "Found Legacy file, relocating... \n";
+		$old_file = $fs->get_file_by_hash($file_instance->pathnamehash);
+		
+		// Call the function to build the file record
+		$file_record = $this->build_file_record($old_file, $context, $activity_name, $activity_area);
+		
 		// Create the file in the new location
 		$sf = $fs->create_file_from_storedfile($file_record, $old_file);
-		echo "Copied file with pathnamehash: " . sha1($fullpath) . " to new location with new pathnamehash:" . $sf->get_pathnamehash() . "\n";
-		$this->update_file_link($relative_url, $activity, $file_record, $activity_name, $activity_area);
+		echo "Copied file with pathnamehash: " . $file_instance->pathnamehash . " to new location with new pathnamehash:" . $sf->get_pathnamehash() . "\n";
+		$this->update_file_link($relative_url, $activity, $file_record, $activity_name, $activity_area, $file_instance->filearea);
 		$this->remove_legacy_file($old_file);
-	    }
-	}    
+		break;
+		// End code block
+	    default:
+		echo "File not found in expected filearea of intro, content or legacy: " . $file_instance->filearea . " Skipping...\n";
+        }
+	    
     } // End move_leagcy_file_to_activity
-    
+
     /* Delete Legacy file
-     * @param stdClass $fs file storage 
+     * @param stdClass $fs file storage
      * @param stdClass $old_file legacy file
      */
     private function remove_legacy_file($old_file)
     {
         // Double Check file is still there before deleting
-        if($old_file->get_pathnamehash() !== '')
+        if($old_file->get_pathnamehash())
         {
             $old_file->delete();
             echo "Removed legacy file \n\n";
@@ -142,21 +147,20 @@ abstract class MoveLegacyFilesAbstract
      * @param string $activity_name
      * @param string $activity_area
      */
-    private function update_file_link($old_path, $activity, $file, $activity_name, $activity_area)
+    private function update_file_link($old_path, $activity, $file, $activity_name, $activity_area, $found_filearea)
     {
         global $DB, $CFG;
 
         // Build new URL
-        $new_url = $CFG->wwwroot . '/pluginfile.php/' . $file->contextid . '/' . $file->component . '/' . $file->filearea . '/' . $file->filename;
+        $new_url = $CFG->wwwroot . '/pluginfile.php/' . $file->contextid . '/' . $file->component . '/' . $file->filearea . $file->filepath . $file->filename;
         $old_url = $CFG->wwwroot . $old_path;
 
         echo "New URL: " . $new_url . "\n";
 
-        /* Call function to build the link record to be saved to DB. 
+        /* Call function to build the link record to be saved to DB.
          * The build_link_record function is to be overriden by the relevant class.
          */
-        $check_url = $CFG->wwwroot . '/pluginfile.php/' . $file->contextid . '/' . $file->component . '/intro/' . $file->filename;
-        $link_record = $this->build_link_record($old_url, $new_url, $activity, $activity_area, $check_url);
+        $link_record = $this->build_link_record($old_url, $new_url, $activity, $activity_area, $found_filearea);
 
         // Update DB with new record
         $DB->update_record($activity_name, $link_record, false);
@@ -169,7 +173,7 @@ abstract class MoveLegacyFilesAbstract
      * @param string $activity_area activity area
      * @return stdClass
      */
-    private function build_file_record($filename, $context, $activity_name, $activity_area)
+    private function build_file_record($file, $context, $activity_name, $activity_area)
     {
         //Create file record for new file
         $file_record = new stdClass();
@@ -178,10 +182,12 @@ abstract class MoveLegacyFilesAbstract
         $file_record->component = 'mod_' . $activity_name;
         $file_record->filearea = $activity_area;
         $file_record->itemid = 0;
-        $file_record->filepath = '/';
-        $file_record->licence = 'cc';   // Creative Commons
-        $file_record->filename = $filename;
-        $filee_record->source = '';
+        $file_record->filepath = $file->get_filepath();
+        $file_record->author = $file->get_author();
+        $file_record->license = $file->get_license();
+        $file_record->filename = $file->get_filename();
+        $file_record->mimetype = $file->get_mimetype();        
+        $file_record->source = '';
         $file_record->timecreated = time();
         $file_record->timemodified = time();
 
@@ -194,7 +200,7 @@ abstract class MoveLegacyFilesAbstract
 class MoveLegacyLabelFiles extends MoveLegacyFilesAbstract
 {
 
-    public function build_link_record($old_url, $new_url, $label, $activity_area, $check_url)
+    public function build_link_record($old_url, $new_url, $label, $activity_area, $found_filearea)
     {
         $updated_content = str_replace($old_url, $new_url, $label->{$activity_area});
 
@@ -216,7 +222,7 @@ class MoveLegacyLabelFiles extends MoveLegacyFilesAbstract
 class MoveLegacyAssignmentFiles extends MoveLegacyFilesAbstract
 {
 
-    public function build_link_record($old_url, $new_url, $assign, $activity_area, $check_url)
+    public function build_link_record($old_url, $new_url, $assign, $activity_area, $found_filearea)
     {
         $updated_content = str_replace($old_url, $new_url, $assign->{$activity_area});
 
@@ -238,17 +244,17 @@ class MoveLegacyAssignmentFiles extends MoveLegacyFilesAbstract
 class MoveLegacyPageFiles extends MoveLegacyFilesAbstract
 {
 
-    public function build_link_record($old_url, $new_url, $page, $activity_area, $check_url)
+    public function build_link_record($old_url, $new_url, $page, $activity_area, $found_filearea)
     {
-	// Check if the there's already an file plus updated link in intro area. If so, just copy
 
-	echo $check_url . "\n";
+        // Check if the there's already a file plus updated link in intro area. If so, just copy
+        if($found_filearea === 'intro' && $activity_area === 'content')
+        {
+            echo "Found file in another file area: " . $found_filearea . "\n";
+            $new_url = str_replace($activity_area, $found_filearea, $new_url);
+	    echo "Updating URL to existing one: " . $new_url . "\n";
+        }
 
-	if($check_url === $new_url)
-	{
-	    $activity_area = 'intro';
-	}
-	
         $updated_area = str_replace($old_url, $new_url, $page->{$activity_area});
         $page->{$activity_area} = $updated_area;
 
@@ -262,6 +268,7 @@ class MoveLegacyPageFiles extends MoveLegacyFilesAbstract
         $record->timemodified = time();
 
         return ($record);
+
     }
 } // End MoveLegacyPageFiles
 
@@ -295,4 +302,3 @@ function start()
 start();
 
 ?>
-
