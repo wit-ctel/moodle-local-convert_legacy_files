@@ -12,7 +12,13 @@ require_once('../../config.php');
  */
 abstract class MoveLegacyFilesAbstract
 {
-    // Must Override
+    /* Must Override
+     * @param string $old_url Old URL
+     * @param string $new_url New URL
+     * @param array $activity Activity
+     * @param string $activity_area Activity Area
+     * @param string $found_filearea Found Filearea
+     */
     abstract function build_link_record($old_url, $new_url, $activity, $activity_area, $found_filearea);
 
     /* Run SQL query for list of activities with legacy files.
@@ -91,7 +97,7 @@ abstract class MoveLegacyFilesAbstract
         //Check for instance of file via filename, ignoring draftfiles
         $file_instance = $DB->get_record_sql('SELECT * FROM {files} WHERE filename LIKE ?  AND filearea <> ? ', array($filename, 'draft'));
         
-
+	// Check which area of the activity that the file is in
         switch ($file_instance->filearea)
         {
 	    case 'intro':
@@ -107,7 +113,7 @@ abstract class MoveLegacyFilesAbstract
 		// End code block
 	    case 'legacy':
 		// Code Block for matching legacy
-		echo "Found Legacy file, relocating... \n";
+		echo "Found Legacy file, relocating...\n";
 		$old_file = $fs->get_file_by_hash($file_instance->pathnamehash);
 		
 		// Call the function to build the file record
@@ -121,11 +127,12 @@ abstract class MoveLegacyFilesAbstract
 		break;
 		// End code block
 	    default:
-		echo "File not found in expected filearea of intro, content or legacy: " . $file_instance->filearea . " Skipping...\n";
+		echo "File not found in expected filearea of intro, content or legacy: " . $file_instance->filearea . " Skipping...\n\n";
         }
 	    
     } // End move_leagcy_file_to_activity
 
+    
     /* Delete Legacy file
      * @param stdClass $fs file storage
      * @param stdClass $old_file legacy file
@@ -136,10 +143,11 @@ abstract class MoveLegacyFilesAbstract
         if($old_file->get_pathnamehash())
         {
             $old_file->delete();
-            echo "Removed legacy file \n\n";
+            echo "Removed legacy file.\n\n";
         }
     } // End remove_legacy_file
 
+    
     /* Update link
      * @param string $old_path old path
      * @param array $activity activity
@@ -166,6 +174,7 @@ abstract class MoveLegacyFilesAbstract
         $DB->update_record($activity_name, $link_record, false);
     } // End update_file_link
 
+    
     /* Build the file record for saving to the DB
      * @param string $filename file name
      * @param array $context context
@@ -199,7 +208,6 @@ abstract class MoveLegacyFilesAbstract
 // Move Legacy Label Files Class
 class MoveLegacyLabelFiles extends MoveLegacyFilesAbstract
 {
-
     public function build_link_record($old_url, $new_url, $label, $activity_area, $found_filearea)
     {
         $updated_content = str_replace($old_url, $new_url, $label->{$activity_area});
@@ -218,10 +226,10 @@ class MoveLegacyLabelFiles extends MoveLegacyFilesAbstract
     }
 } // End MoveLegacyLabelFiles
 
+
 // Move Legacy Assignment Files class
 class MoveLegacyAssignmentFiles extends MoveLegacyFilesAbstract
 {
-
     public function build_link_record($old_url, $new_url, $assign, $activity_area, $found_filearea)
     {
         $updated_content = str_replace($old_url, $new_url, $assign->{$activity_area});
@@ -240,19 +248,18 @@ class MoveLegacyAssignmentFiles extends MoveLegacyFilesAbstract
     }
 } // End MoveLegacyAssignmentFiles
 
+
 // Move Legacy Page Files class
 class MoveLegacyPageFiles extends MoveLegacyFilesAbstract
 {
-
     public function build_link_record($old_url, $new_url, $page, $activity_area, $found_filearea)
     {
-
         // Check if the there's already a file plus updated link in intro area. If so, just copy
         if($found_filearea === 'intro' && $activity_area === 'content')
         {
             echo "Found file in another file area: " . $found_filearea . "\n";
             $new_url = str_replace($activity_area, $found_filearea, $new_url);
-	    echo "Updating URL to existing one: " . $new_url . "\n";
+	    echo "Updating URL to existing one: " . $new_url . "\n\n";
         }
 
         $updated_area = str_replace($old_url, $new_url, $page->{$activity_area});
@@ -268,7 +275,6 @@ class MoveLegacyPageFiles extends MoveLegacyFilesAbstract
         $record->timemodified = time();
 
         return ($record);
-
     }
 } // End MoveLegacyPageFiles
 
@@ -276,29 +282,28 @@ class MoveLegacyPageFiles extends MoveLegacyFilesAbstract
 // Start the Script
 function start()
 {
-
-    echo "Searching Labels for Legacy Files\n";
+    echo "Searching Labels for Legacy Files...\n";
     $labelFiles = new MoveLegacyLabelFiles();
     $sql_results = $labelFiles->search_activity('label', 'intro');
     $labelFiles->search_activity_files($sql_results, 'label', 'intro');
 
-    echo "Searching Assignments for Legacy Files\n";
+    echo "Searching Assignments for Legacy Files...\n";
     $assignFiles = new MoveLegacyAssignmentFiles();
     $sql_results = $assignFiles->search_activity('assign', 'intro');
     $assignFiles->search_activity_files($sql_results, 'assign', 'intro');
 
-    echo "Searching Pages for Legacy Files\n";
     $pageFiles = new MoveLegacyPageFiles();
-    echo "Searching Intro Area of Pages\n";
+    echo "Searching Intro Area of Pages for Legacy Files...\n";
     $sql_intro_results = $pageFiles->search_activity('page', 'intro');
     $pageFiles->search_activity_files($sql_intro_results, 'page', 'intro');
 
-    echo "Searching Content Area of Pages\n";
+    echo "Searching Content Area of Pages...\n";
     $sql_content_results = $pageFiles->search_activity('page', 'content');
     $pageFiles->search_activity_files($sql_content_results, 'page', 'content');
 }
 
 
+// Start everything
 start();
 
 ?>
