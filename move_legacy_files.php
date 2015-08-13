@@ -38,6 +38,7 @@ abstract class MoveLegacyFilesAbstract
         return($results);
     } // End search_activity
 
+
     /* Search activity for legacy files.
      * @param array $sql_results sql results
      * @param string $activity_name activity name
@@ -55,7 +56,8 @@ abstract class MoveLegacyFilesAbstract
             foreach($matches as $match)
             {
                 // Trim out anything after '?'
-                $search_match = array_shift(explode('?', $match[1]));
+		$matched = (explode('?', $match[1]));
+                $search_match = array_shift($matched);
                 echo "Matched Search: " . $search_match . "\n";
 
                 // Get the relative url
@@ -71,6 +73,7 @@ abstract class MoveLegacyFilesAbstract
             }
         }
     } // End search_activity_files
+
 
     /* Move Legacy file to activity area
      * @param string $relativepath relative path
@@ -92,44 +95,45 @@ abstract class MoveLegacyFilesAbstract
         // Retrieve the file and store it temporarily
         $context = context_course::instance($activity->course);
         $fs = get_file_storage();
-        $fullpath = "/$context->id/course/legacy/0/" . $final_path;
+        $fullpath = "/" . $context->id . "/course/legacy/0/" . $final_path;
+
+	echo "Fullpath: " . $fullpath . "\n";
 
         //Check for instance of file via filename, ignoring draftfiles
-        $file_instance = $DB->get_record_sql('SELECT * FROM {files} WHERE filename LIKE ?  AND filearea <> ? ', array($filename, 'draft'));
+	$file_instance = $DB->get_record_sql('SELECT * FROM {files} WHERE pathnamehash LIKE ? AND filearea <> ? ', array(sha1($fullpath), 'draft'));
         
 	// Check which area of the activity that the file is in
-        switch ($file_instance->filearea)
+        switch ($file_instance['filearea'])
         {
 	    case 'intro':
 	    case 'content':
 		// Code block for matching intro or content
 		echo "File already exists in non-legacy area: " . $file_instance->filearea . " : Updating link to match...\n";
-		$old_file = $fs->get_file_by_hash($file_instance->pathnamehash);
+		$old_file = $fs->get_file_by_hash($file_instance['pathnamehash']);
 		
 		// Call the function to build the file record
 		$file_record = $this->build_file_record($old_file, $context, $activity_name, $activity_area);
-		$this->update_file_link($relative_url, $activity, $file_record, $activity_name, $activity_area, $file_instance->filearea);
+		$this->update_file_link($relative_url, $activity, $file_record, $activity_name, $activity_area, $file_instance['filearea']);
 		break;
 		// End code block
 	    case 'legacy':
 		// Code Block for matching legacy
 		echo "Found Legacy file, relocating...\n";
-		$old_file = $fs->get_file_by_hash($file_instance->pathnamehash);
+		$old_file = $fs->get_file_by_hash($file_instance['pathnamehash']);
 		
 		// Call the function to build the file record
 		$file_record = $this->build_file_record($old_file, $context, $activity_name, $activity_area);
 		
 		// Create the file in the new location
 		$sf = $fs->create_file_from_storedfile($file_record, $old_file);
-		echo "Copied file with pathnamehash: " . $file_instance->pathnamehash . " to new location with new pathnamehash:" . $sf->get_pathnamehash() . "\n";
-		$this->update_file_link($relative_url, $activity, $file_record, $activity_name, $activity_area, $file_instance->filearea);
+		echo "Copied file with pathnamehash: " . $file_instance['pathnamehash'] . " to new location with new pathnamehash:" . $sf->get_pathnamehash() . "\n";
+		$this->update_file_link($relative_url, $activity, $file_record, $activity_name, $activity_area, $file_instance['filearea']);
 		$this->remove_legacy_file($old_file);
 		break;
 		// End code block
 	    default:
-		echo "File not found in expected filearea of intro, content or legacy: " . $file_instance->filearea . " Skipping...\n\n";
+		echo "File not found in expected filearea of intro, content or legacy: " . $file_instance['filearea'] . " Skipping...\n\n";
         }
-	    
     } // End move_leagcy_file_to_activity
 
     
